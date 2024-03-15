@@ -16,12 +16,13 @@
  环境变量 YLQX_COOKIE 驿路黔寻
  */
 
-const SPLIT = "\n"; // 分割符（可自定义）
+const SPLIT = ";"; // 分割符（可自定义）
+
+require('dotenv').config();  // 添加环境变量
 
 const axios = require('axios');
 const crypto = require('crypto');
 const moment = require('moment');
-const notify = require('./sendNotify');
 
 const XLTH_APPID = 'wxded2e7e6d60ac09d'; // 新联惠购
 const GLYP_APPID = 'wx61549642d715f361'; // 贵旅优品
@@ -31,6 +32,9 @@ const ZHCS_APPID = 'wx624149b74233c99a'; // 遵航出山
 const GYQP_APPID = 'wx5508e31ffe9366b8'; // 贵盐黔品
 const LLSC_APPID = 'wx821fb4d8604ed4d6'; // 乐旅商城
 const YLQX_APPID = 'wxee0ce83ab4b26f9c'; // 驿路黔寻
+
+const PUSHDEER_KEY = process.env.PUSHDEER_KEY; // PUSHDEER_KEY
+const PUSHDEER_URL = process.env.PUSHDEER_URL; // PUSHDEER_URL
 
 const HOST = 'https://gw.huiqunchina.com';
 const AK = '00670fb03584fbf44dd6b136e534f495';
@@ -42,6 +46,36 @@ function delay(time) {
     return new Promise(resolve => setTimeout(resolve, time));
 }
 
+// 发送消息
+function pushDeerNotify(text, desp) {
+
+    const url = PUSHDEER_URL || `https://api2.pushdeer.com/message/push`;
+    const method = 'post';
+    const data = {
+        pushkey: PUSHDEER_KEY,
+        text: text,
+        desp: desp,
+        type: 'markdown'
+    };
+    const headers = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        };
+
+    axios(url, {method: method, data: data, headers: headers})
+        .then(res => {
+            if (res.status != '200') {
+                console.log(`PushDeer发送通知消息异常\n${JSON.stringify(data)}`);
+            } else {
+                console.log('PushDeer发送通知消息成功������\n');
+            }
+        })
+        .catch(err => {
+            console.log('发送通知调用API失败！！\n');
+            console.log(err);
+        });
+}
+
+// 计算签名算法
 function calculateDigest(body, sk) {
     const hmac = crypto.createHmac('sha256', sk);
     hmac.update(body);
@@ -49,6 +83,7 @@ function calculateDigest(body, sk) {
     return signature;
 }
 
+// 计算签名算法
 function calculateSignature(method, url, ak, sk, date) {
     const strToSign = `${method.toUpperCase()}\n${url}\n\n${ak}\n${date}\n`;
     const hmac = crypto.createHmac('sha256', sk);
@@ -57,6 +92,7 @@ function calculateSignature(method, url, ak, sk, date) {
     return signature;
 }
 
+// 构建请求头
 function buildHeader(method, url, body) {
     const date = moment().utc().format('ddd, DD MMM YYYY HH:mm:ss [GMT]');
     const signature = calculateSignature(method, url, AK, SK, date);
@@ -73,6 +109,7 @@ function buildHeader(method, url, body) {
     return headers;
 }
 
+// 获取用户信息
 async function getUserInfo(appId, token) {
     const url = '/front-manager/api/customer/queryById/token';
     const method = 'post';
@@ -91,6 +128,7 @@ async function getUserInfo(appId, token) {
     return resData;
 }
 
+// 获取活动信息
 async function getChannelActivity(id, token) {
     const url = '/front-manager/api/customer/promotion/channelActivity';
     const method = 'post';
@@ -109,6 +147,7 @@ async function getChannelActivity(id, token) {
     return resData;
 }
 
+// 获取通道
 async function getChannelInfoId(appId) {
     const url = '/front-manager/api/get/getChannelInfoId';
     const method = 'post';
@@ -149,6 +188,25 @@ async function checkCustomerInQianggou(activityId, channelId, token) {
     const url = '/front-manager/api/customer/promotion/checkCustomerInQianggou';
     const method = 'post';
     const data = {activityId, channelId};
+    const headers = buildHeader(method, url, JSON.stringify(data));
+    headers['X-access-token'] = token;
+
+    let resData;
+    await axios(HOST + url, {method: method, data: data, headers: headers})
+        .then(res => {
+            resData = res.data;
+        })
+        .catch(err => {
+            resData = err.response.data;
+        });
+    return resData;
+}
+
+// 获取中奖记录
+async function getWinningRecord(appId, token) {
+    const url = '/front-manager/api/customer/promotion/queryLotteryRecord';
+    const method = 'post';
+    const data = {appId};
     const headers = buildHeader(method, url, JSON.stringify(data));
     headers['X-access-token'] = token;
 
@@ -209,7 +267,7 @@ async function autoSubmit(appId, token) {
         const realName = res1.data.realName;
         const phone = res1.data.phone;
         console.log(`当前用户[${phone}]`);
-        sendMessage.push(`当前用户[${phone}]`);
+        sendMessage.push(`当前用户: ${phone}`);
 
         const res2 = await getChannelActivity(channelId, token);
         if (res2.code != '10000') {
@@ -220,7 +278,7 @@ async function autoSubmit(appId, token) {
         const activityId = res2.data.id;
         const activityName = res2.data.name;
         console.log(`活动名称[${activityName}]`);
-        sendMessage.push(`活动名称[${activityName}]`);
+        sendMessage.push(`活动名称: ${activityName}`);
 
         const res3 = await checkCustomerInQianggou(activityId, channelId, token);
         if (res3.code != '10000') {
@@ -236,7 +294,16 @@ async function autoSubmit(appId, token) {
             this.sendMessage = res4.message;
         }
         console.log(`预约结果[${message}]`);
-        sendMessage.push(`预约结果[${message}]`);
+        sendMessage.push(`预约结果: ${message}`);
+        
+        // 中奖记录
+        const res4 = await getWinningRecord(appId, token);
+        if (res4.success) {
+            const record = res4.data.list.length >= 0 ? res4.data.list : '未中奖';
+            console.log('中奖记录: ' + record);
+            sendMessage.push('中奖记录: ' + record);
+        }
+        
     } catch (err) {
         console.log(`运行异常[${err.message}]`);
         sendMessage.push(`运行异常[${err.message}]`);
@@ -252,6 +319,9 @@ async function main() {
     const GYQP_COOKIE_ARR = process.env.GYQP_COOKIE; // 贵盐黔品
     const LLSC_COOKIE_ARR = process.env.LLSC_COOKIE; // 乐旅商城
     const YLQX_COOKIE_ARR = process.env.YLQX_COOKIE; // 驿路黔寻
+    
+    // 获取当前时间
+    const currentTime = moment().format('YYYY-MM-DD HH:mm:ss');
 
     if (XLTH_COOKIE_ARR) {
         console.log('新联惠购预约开始');
@@ -281,7 +351,7 @@ async function main() {
 
     if (KGLG_COOKIE_ARR) {
         console.log('空港乐购预约开始');
-        sendMessage.push('新联惠购预约开始');
+        sendMessage.push('空港乐购预约开始');
         for (let [index, item] of KGLG_COOKIE_ARR.split(SPLIT).entries()) {
             console.log(`----第${index + 1}个号----`);
             sendMessage.push(`----第${index + 1}个号----`);
@@ -294,7 +364,7 @@ async function main() {
 
     if (HLQG_COOKIE_ARR) {
         console.log('航旅黔购预约开始');
-        sendMessage.push('新联惠购预约开始');
+        sendMessage.push('航旅黔购预约开始');
         for (let [index, item] of HLQG_COOKIE_ARR.split(SPLIT).entries()) {
             console.log(`----第${index + 1}个号----`);
             sendMessage.push(`----第${index + 1}个号----`);
@@ -307,7 +377,7 @@ async function main() {
 
     if (ZHCS_COOKIE_ARR) {
         console.log('遵行出山预约开始');
-        sendMessage.push('新联惠购预约开始');
+        sendMessage.push('遵行出山预约开始');
         for (let [index, item] of ZHCS_COOKIE_ARR.split(SPLIT).entries()) {
             console.log(`----第${index + 1}个号----`);
             sendMessage.push(`----第${index + 1}个号----`);
@@ -355,9 +425,12 @@ async function main() {
         }
         console.log('驿路黔寻预约结束\n');
         sendMessage.push('驿路黔寻预约结束\n');
-    }
 
-    await notify.sendNotify(`葫芦娃预约`, sendMessage.join('\n'), {}, '\n\n本通知 By：一泽');
+    }
+    
+    console.log('当前时间: ' + currentTime)
+
+    await pushDeerNotify(`葫芦娃预约`, sendMessage.join('\n'));
 }
 
 main();
